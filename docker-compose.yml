@@ -1,0 +1,334 @@
+version: '3'
+
+networks:
+  pg-barman-network:
+    name: pg-barman-network
+    driver: bridge
+    ipam:
+      config:
+      - subnet: 100.100.0.0/16
+
+volumes:
+  pg-data:
+    name: postgres-pgdata
+    driver: local
+  pg-run:
+    name: postgres-run
+    driver: local
+  pg-ssh:
+    name: postgres-ssh
+    driver: local
+  barman-ssh:
+    name: barman-ssh
+    driver: local
+  estrela-data:
+    name: estrela-data
+    driver: local
+  estrela-run:
+    name: estrela-run
+    driver: local
+  estrela-ssh:
+    name: estrela-ssh
+    driver: local
+  tembd-data:
+    name: tembd-data
+    driver: local
+  tembd-ssh:
+    name: tembd-ssh
+    driver: local
+
+x-common-settings: &common-settings
+  restart: always
+  cpus: 1.5
+  mem_limit: 1g
+  memswap_limit: 1g
+  logging:
+    driver: json-file
+    options:
+      max-size: "25m"
+      max-file: "2"
+
+services:
+  #
+  # Postgres
+  #
+  postgres.cluster:
+    container_name: postgres.cluster
+    hostname: postgres.cluster
+    image: postgres/ssh:latest
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.10
+    build: &build-postgres
+      context: .
+      dockerfile: Dockerfile
+      target: postgres
+    volumes:
+      - pg-data:/var/lib/postgresql/data:rw
+      - pg-run:/var/run/postgresql:rw
+      - pg-ssh:/var/lib/postgresql/.ssh:rw
+    ports:
+      - "15432:5432"
+      - "122:22"
+    environment: &env-postgres
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "postgresql"
+      PGPORT: "5432"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    healthcheck: &healthcheck-postgres
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER}" ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    <<: *common-settings
+    user: postgres
+    command: |
+      -c wal-level=replica
+      -c shared_preload_libraries=pg_stat_statements
+      -c log_connections=on
+      -c log_statement=all
+      -c "log_line_prefix=%m [%p]: [%l-1] app=%a,db=%d,client=%h,user=%u "
+      -c cluster_name=postgres.cluster
+
+  #
+  # Barman
+  #
+  barman:
+    depends_on:
+      postgres.cluster:
+        condition: service_healthy
+      estrela.cluster:
+        condition: service_healthy
+      temboard.db:
+        condition: service_healthy
+    container_name: barman
+    hostname: barman
+    image: barman/ssh:latest
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.20
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: barman
+    ports:
+      - "220:22"
+    volumes:
+      - ./barman/data:/var/lib/barman/data:rw
+      - ./barman/server:/var/lib/barman/server:rw
+      - ./barman.conf:/etc/barman.conf:rw
+      - barman-ssh:/home/barman/.ssh:rw
+    user: barman
+    <<: *common-settings
+
+
+  #
+  # Estrela
+  #
+  estrela.cluster:
+    container_name: estrela.cluster
+    hostname: estrela.cluster
+    image: postgres/ssh-estrela:latest
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.30
+    build:
+      <<: *build-postgres
+    volumes:
+      - estrela-data:/var/lib/postgresql/data:rw
+      - estrela-run:/var/run/postgresql:rw
+      - estrela-ssh:/var/lib/postgresql/.ssh:rw
+    ports:
+      - "25432:5432"
+      - "222:22"
+    environment:
+      <<: *env-postgres
+      POSTGRES_DB: "estrela"
+    healthcheck:
+      <<: *healthcheck-postgres
+    <<: *common-settings
+    user: postgres
+    command: |
+      -c wal-level=replica
+      -c shared_preload_libraries=pg_stat_statements
+      -c log_connections=on
+      -c log_statement=all
+      -c "log_line_prefix=%m [%p]: [%l-1] app=%a,db=%d,client=%h,user=%u "
+      -c cluster_name=estrela.cluster
+
+  #
+  # Temboard
+  #
+  temboard.web:
+    depends_on:
+      temboard.db:
+        condition: service_healthy
+    container_name: temboard.web
+    hostname: temboard.web
+    image: temboard.web:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: temboard
+    environment:
+      # Log
+      DEBUG: "INFO"
+      # Temboard
+      TEMBOARD_PORT: 8888
+      # Repository
+      PGHOST: temboard.db
+      PGPORT: 5432
+      PGUSER: temboard
+      TEMBOARD_PASSWORD: temboard
+      TEMBOARD_DATABASE: temboard
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./temboard/etc:/etc/temboard
+      - ./temboard/var:/var/lib/temboard
+      - ./temboard/log:/var/log/temboard
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://temboard.web:$${TEMBOARD_PORT}/ || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 15s
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.40
+    << : *common-settings
+    entrypoint: ["bash", "-c"]
+    command: [ "/home/temboard/entrypoint.sh" ]
+
+  temboard.db:
+    container_name: temboard.db
+    hostname: temboard.db
+    image: postgres:15-alpine
+    volumes:
+      - ./temboard/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U temboard" ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    environment:
+      POSTGRES_USER: "temboard"
+      POSTGRES_PASSWORD: "temboard"
+      POSTGRES_DB: "temboard"
+      PGPORT: 5432      
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    <<: *common-settings
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.50
+
+
+  temboard.agente.postgres.cluster:
+    depends_on:
+      postgres.cluster:
+        condition: service_healthy
+      temboard.web:
+        condition: service_healthy
+    container_name: temboard.agente.postgres.cluster
+    hostname: temboard.agente.postgres.cluster
+    image: dalibo/temboard-agent:9
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.11
+    volumes:
+    - pg-data:/var/lib/postgresql/data
+    - pg-run:/var/run/postgresql/
+    - /var/run/docker.sock:/var/run/docker.sock
+    environment: 
+      TEMBOARD_UI_URL: http://temboard.web:8888/
+      TEMBOARD_UI_USER: admin
+      TEMBOARD_UI_PASSWORD: admin
+      TEMBOARD_LOGGING_LEVEL: INFO
+      PGPASSWORD: postgres
+      TEMBOARD_HOSTNAME: postgres.cluster
+      PGDATABASE: postgresql
+    << : *common-settings
+
+  temboard.agente.estrela.cluster:
+    depends_on:
+      estrela.cluster:
+        condition: service_healthy
+      temboard.web:
+        condition: service_healthy
+    container_name: temboard.agente.estrela.cluster
+    hostname: temboard.agente.estrela.cluster
+    image: dalibo/temboard-agent:9
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.31
+    volumes:
+    - estrela-data:/var/lib/postgresql/data
+    - estrela-run:/var/run/postgresql/
+    - /var/run/docker.sock:/var/run/docker.sock
+    environment: 
+      TEMBOARD_UI_URL: http://temboard.web:8888/
+      TEMBOARD_UI_USER: admin
+      TEMBOARD_UI_PASSWORD: admin
+      TEMBOARD_LOGGING_LEVEL: INFO
+      PGPASSWORD: postgres
+      TEMBOARD_HOSTNAME: estrela.cluster
+      PGDATABASE: estrela
+    << : *common-settings
+
+
+  #
+  # NIFI
+  #
+  # Acessar com http://localhost:8081/nifi
+  # OU
+  # Acessar com https://localhost:8443/nifi usuario: admin senha: ILvhISLIkaTlBACLUfhesmtTg
+  nifi.web:
+    depends_on:
+      postgres.cluster:
+        condition: service_healthy
+      estrela.cluster:
+        condition: service_healthy
+    container_name: nifi.web
+    hostname: nifi.web
+    image: nifi:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: nifi
+    ports:
+      # - 8081:8080
+      - 8443:8443
+    environment:
+      # NIFI_WEB_HTTP_PORT: "8080"
+      NIFI_WEB_HTTPS_PORT: "8443"
+      SINGLE_USER_CREDENTIALS_USERNAME: "admin" 
+      SINGLE_USER_CREDENTIALS_PASSWORD: "ILvhISLIkaTlBACLUfhesmtTg"
+      TZ: "Ameria/Bahia"
+    volumes:
+      - ./nifi/drivers:/opt/nifi/nifi-current/jdbc:rw
+      - ./nifi/data:/opt/nifi/data:rw
+      - ./nifi/database_repository:/opt/nifi/nifi-current/database_repository
+      - ./nifi/flowfile_repository:/opt/nifi/nifi-current/flowfile_repository
+      - ./nifi/content_repository:/opt/nifi/nifi-current/content_repository
+      - ./nifi/provenance_repository:/opt/nifi/nifi-current/provenance_repository
+      - ./nifi/state:/opt/nifi/nifi-current/state
+      - ./nifi/logs:/opt/nifi/nifi-current/logs
+    networks:
+      pg-barman-network:
+        ipv4_address: 100.100.0.60
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://nifi.web:$${NIFI_WEB_HTTPS_PORT}/ || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 15s
+    << : *common-settings
+
+

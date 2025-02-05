@@ -1,0 +1,45 @@
+; Barman, Backup and Recovery Manager for PostgreSQL
+; https://www.pgbarman.org/ - https://www.enterprisedb.com/
+;
+; Template configuration file for a server using
+; only streaming replication protocol
+;
+
+[temboard-server]
+; Human readable description
+description =  "PostgreSQL Database Temboard (Streaming-Only)"
+
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; PostgreSQL connection string (mandatory)
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+conninfo = host=temboard.db user=barman dbname=postgres password=barman port=5432
+
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; PostgreSQL streaming connection string
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; To be used by pg_basebackup for backup and pg_receivewal for WAL streaming
+; NOTE: streaming_barman is a regular user with REPLICATION privilege
+streaming_conninfo = host=temboard.db user=barman dbname=postgres password=barman port=5432
+
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Backup settings (via pg_basebackup)
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+backup_method = postgres
+streaming_backup_name = temboard_streaming_backup
+
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; WAL streaming settings (via pg_receivewal)
+; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+streaming_archiver = on
+slot_name = temboard
+create_slot = auto
+streaming_archiver_name = temboard_receive_wal
+streaming_archiver_batch_size = 50
+
+; Uncomment the following line if you are also using archive_command
+; otherwise the "empty incoming directory" check will fail
+;archiver = on
+
+; PATH setting for this server
+;path_prefix = "/usr/pgsql-12/bin"
+path_prefix = "/usr/bin"
