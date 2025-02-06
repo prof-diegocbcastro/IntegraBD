@@ -1,23 +1,28 @@
-# Subindo o projeto
+# 🐘🚀 Sobe o projeto
 
-## Configuração
+>Projeto educacional para a turma de Administração de Banco de Dados do Cefet de Maria da Graça. Utiliza PostgreSQL em estrela para data warehouse, backup com Barman, monitoramento com Teamboard, ETL com Nifi e migração com PGLoader. Focado na integração e aprendizado prático de DBMS.
 
-### Execute o comando o comando para baixar as dependências do projeto
+## ⚙️ Configuração
+
+### 📥 Baixar as dependências do projeto
 ```bash
-    bash run.sh configure
- ```
+bash run.sh configure
+```
 
-### Build o projeto
+### 🛠️ Build do projeto
 ```bash
-    bash run.sh build
- ```
+bash run.sh build
+```
 
- ### Rodando o projeto
+### ▶️ Rodando o projeto
 ```bash
-    bash run.sh up
- ```
+bash run.sh up
+```
 
-- Documentação para execução dos processos do Barman. README.md{#barman/README.md}
-- Documentação para execução dos processos do TemBoard. README.md{#temboard/README.md}
-- Documentação para execução dos processos do Nifi. README.md{#nifi/README.md}
-- Documentação para execução dos processos do Pgloader. README.md{#pgloader/README.md}
+## 📚 Documentação
+
+- 📌 [Documentação do Barman](barman/README.md)
+- 📌 [Documentação do TemBoard](temboard/README.md)
+- 📌 [Documentação do Nifi](nifi/README.md)
+- 📌 [Documentação do Pgloader](pgloader/README.md)
+
